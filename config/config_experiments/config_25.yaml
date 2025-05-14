@@ -1,0 +1,19 @@
+# 25% data sample configuration
+
+data:
+  sample_size: 0.25  # Use 25% of data
+
+# Adjusted model parameters for 25% data
+models:
+  collaborative:
+    neighborhood:
+      k_neighbors: 15
+
+    matrix_fact:
+      n_factors: 30
+      n_epochs: 15
+
+# Balanced evaluation settings
+evaluation:
+  cv_folds: 3
+  k_values: [5, 10, 20]

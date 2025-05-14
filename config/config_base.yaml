@@ -1,0 +1,84 @@
+# Base configuration for recommendation system
+
+# Data settings
+data:
+  dataset_dir: "data/datasets"
+  paths:
+    customers: "g_dim_customers.csv"
+    products: "g_dim_products.csv"
+    sales: "g_fact_sales.csv"
+    customer_report: "Customer_report_cleaned_data.csv"
+    product_report: "Product_report_cleaned_data.csv"
+  encoding: "utf-8"
+  sample_size: 1.0  # Use 100% of data by default
+  random_seed: 42
+
+# Data splitting
+split:
+  test_size: 0.2
+  strategy: "time"  # Options: random, time, user, item
+  holdout_timestamp: null  # For time-based splits
+  min_ratings: 5  # Minimum number of ratings per user for inclusion
+
+# Model parameters
+models:
+  base:
+    top_k: 10  # Number of recommendations to generate
+
+  content_based:
+    tfidf:
+      max_features: 100
+      min_df: 0.01
+      max_df: 0.95
+    similarity_metric: "cosine"  # Options: cosine, jaccard, pearson, etc.
+    features:
+      text: ["product_name"]
+      categorical: ["category", "sub_category"]
+      numerical: ["cost"]
+
+  collaborative:
+    neighborhood:
+      user_based: true
+      k_neighbors: 30
+      min_k: 1
+      sim_options:
+        name: "cosine"  # Options: msd, cosine, pearson, pearson_baseline
+        min_support: 3  # Minimum number of common items
+        user_based: true
+
+    matrix_fact:
+      n_factors: 50
+      n_epochs: 20
+      lr_all: 0.005
+      reg_all: 0.02
+      biased: true
+
+  hybrid:
+    weights:
+      content_based: 0.3
+      collaborative: 0.7
+
+  random:
+    seed: 42
+
+  popularity:
+    consider_ratings: true  # Use rating values for popularity
+
+# Evaluation settings
+evaluation:
+  metrics: ["precision", "recall", "ndcg", "hit_rate", "map", "mrr", "diversity", "novelty"]
+  k_values: [1, 5, 10, 20]
+  cv_folds: 5  # Number of cross-validation folds
+  relevance_threshold: 3.5  # Rating threshold for relevance
+
+# Experiment settings
+experiment:
+  output_dir: "results"
+  save_models: true
+  verbose: true
+
+# Logging
+logging:
+  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "recommendation_system.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

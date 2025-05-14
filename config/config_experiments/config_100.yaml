@@ -1,0 +1,19 @@
+# 100% data configuration
+
+data:
+  sample_size: 1.0  # Use 100% of data
+
+# Full model parameters for complete dataset
+models:
+  collaborative:
+    neighborhood:
+      k_neighbors: 30
+
+    matrix_fact:
+      n_factors: 50
+      n_epochs: 20
+
+# Comprehensive evaluation
+evaluation:
+  cv_folds: 5
+  k_values: [1, 5, 10, 20, 50]

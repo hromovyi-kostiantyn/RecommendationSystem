@@ -1,0 +1,18 @@
+# Core libraries for data manipulation and numerical operations
+pandas>=1.3.0
+numpy>=2.2.5
+scipy>=1.7.0
+
+# Machine learning and recommendation specific libraries
+scikit-learn>=1.0.0
+implicit>=0.6.0  # For ALS matrix factorization
+
+# Configuration management
+PyYAML>=6.0
+
+# Utility for progress bars
+tqdm>=4.60.0
+
+# Optional: For data visualization
+matplotlib>=3.4.0
+seaborn>=0.11.0

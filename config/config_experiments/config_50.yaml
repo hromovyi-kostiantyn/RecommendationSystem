@@ -1,0 +1,19 @@
+# 50% data sample configuration
+
+data:
+  sample_size: 0.5  # Use 50% of data
+
+# Standard model parameters suitable for half dataset
+models:
+  collaborative:
+    neighborhood:
+      k_neighbors: 20
+
+    matrix_fact:
+      n_factors: 40
+      n_epochs: 15
+
+# Standard evaluation settings
+evaluation:
+  cv_folds: 5
+  k_values: [1, 5, 10, 20]
