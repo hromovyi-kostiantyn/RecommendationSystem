@@ -58,6 +58,15 @@ models:
       content_based: 0.3
       collaborative: 0.7
 
+  cold_start:
+    min_interactions: 5
+    diversity_weight: 0.3
+    demographic_fields:
+      - age_group
+      - country
+      - gender
+      - marital_status
+
   random:
     seed: 42
 

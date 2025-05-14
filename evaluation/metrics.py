@@ -370,3 +370,43 @@ def coverage_at_k(recommendations: List[List[int]], all_items: Set[int], k: int 
 
     # Calculate coverage
     return len(recommended_items) / len(all_items)
+
+
+def calculate_cumulative_hit_rate(recommendations: List[List[int]], relevant_items: List[Set[int]],
+                                  k_values: List[int]) -> Dict[int, float]:
+    """
+    Calculate cumulative hit rate at different k values.
+
+    Args:
+        recommendations: List of recommendation lists for each user
+        relevant_items: List of sets of relevant items for each user
+        k_values: List of k values to calculate hit rate for
+
+    Returns:
+        Dictionary mapping k values to cumulative hit rates
+    """
+    if not recommendations or not relevant_items:
+        return {k: 0.0 for k in k_values}
+
+    # Calculate hit rate for each k value
+    cumulative_hit_rates = {}
+
+    for k in sorted(k_values):
+        hits = 0
+
+        for user_recs, user_rel in zip(recommendations, relevant_items):
+            # Skip users with no relevant items
+            if not user_rel:
+                continue
+
+            # Consider only the top k recommendations
+            top_k = user_recs[:k]
+
+            # Check if any relevant item is in the top k
+            if any(item in user_rel for item in top_k):
+                hits += 1
+
+        # Calculate hit rate
+        cumulative_hit_rates[k] = hits / len(recommendations) if recommendations else 0.0
+
+    return cumulative_hit_rates

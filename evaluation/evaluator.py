@@ -6,7 +6,7 @@ from collections import defaultdict
 from models.base import BaseRecommender
 from evaluation.metrics import (
     precision_at_k, recall_at_k, ndcg_at_k, mean_average_precision,
-    mean_reciprocal_rank, hit_rate_at_k, diversity_at_k, novelty_at_k, coverage_at_k
+    mean_reciprocal_rank, hit_rate_at_k, diversity_at_k, novelty_at_k, coverage_at_k, calculate_cumulative_hit_rate
 )
 from utils.logger import get_logger
 from utils.helpers import timer
@@ -160,6 +160,13 @@ class Evaluator:
 
         # Calculate metrics
         results = {}
+
+        cumulative_hit_rates = calculate_cumulative_hit_rate(
+            all_recommendations, all_relevant_items, self.k_values
+        )
+
+        for k, rate in cumulative_hit_rates.items():
+            results[f"cumulative_hit_rate@{k}"] = rate
 
         for metric in self.metrics:
             if metric in self.metric_functions:

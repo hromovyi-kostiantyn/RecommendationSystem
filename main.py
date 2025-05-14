@@ -17,6 +17,15 @@ from models.hybrid import HybridRecommender
 from evaluation.evaluator import Evaluator
 from experiments.runner import ExperimentRunner, ExperimentAnalyzer
 from utils.logger import get_logger
+from utils.results import (
+    create_experiment_directory,
+    save_config,
+    save_results_to_csv,
+    save_results_to_json,
+    generate_report
+)
+from utils.visualization import create_results_visualizations
+from models.cold_start import ColdStartRecommender
 
 logger = get_logger(__name__)
 
@@ -36,7 +45,7 @@ def parse_arguments():
     # Models to include
     parser.add_argument('--models', type=str, nargs='+',
                         choices=['random', 'popularity', 'neighborhood', 'matrix_fact',
-                                 'content_based', 'hybrid', 'all'],
+                                 'content_based', 'hybrid', 'all', 'cold_start'],
                         default=['all'], help='Models to include')
 
     # Dataset options
@@ -70,7 +79,7 @@ def setup_models(model_types: List[str], config: Dict[str, Any]) -> Dict[str, An
     # Expand 'all' to include all model types
     if 'all' in model_types:
         model_types = ['random', 'popularity', 'neighborhood', 'matrix_fact',
-                       'content_based', 'hybrid']
+                       'content_based', 'hybrid', 'cold_start']
 
     models = {}
 
@@ -89,6 +98,8 @@ def setup_models(model_types: List[str], config: Dict[str, Any]) -> Dict[str, An
             models[model_type] = ContentBasedRecommender(config)
         elif model_type == 'hybrid':
             models[model_type] = HybridRecommender(config)
+        elif model_type == 'cold_start':
+            models[model_type] = ColdStartRecommender(config)
 
     return models
 
@@ -229,6 +240,21 @@ def evaluate_models(models: Dict[str, Any], dataset):
 
         except Exception as e:
             logger.error(f"Error evaluating {name} model: {str(e)}", exc_info=True)
+
+    experiment_dir = create_experiment_directory()
+
+    save_config(config, experiment_dir)
+
+    # Save results to CSV and JSON
+    save_results_to_csv(results, experiment_dir)
+    save_results_to_json(results, experiment_dir)
+
+    # Create visualizations
+    plots_dir = os.path.join(experiment_dir, 'plots')
+    create_results_visualizations(results, plots_dir)
+
+    # Generate report
+    generate_report(results, experiment_dir)
 
     logger.info("Model evaluation complete")
     return results
