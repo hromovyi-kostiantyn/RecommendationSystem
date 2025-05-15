@@ -88,6 +88,15 @@ experiment:
 
 # Logging
 logging:
-  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  file: "recommendation_system.log"
+  level: "INFO"          # Default log level
+  file: "logs/recommendation_system.log"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  # New settings for more control
+  console_level: "WARNING"  # Only show warnings and errors in console
+  file_level: "INFO"        # Record all info and above in log file
+
+  # Module-specific settings
+  data_level: "INFO"        # Log level for data processing
+  models_level: "INFO"      # Log level for model training
+  evaluation_level: "INFO"  # Log level for evaluation

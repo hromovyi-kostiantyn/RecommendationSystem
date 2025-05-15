@@ -1,6 +1,9 @@
+# Updated logging configuration in utils/logger.py
+
 import os
 import logging
 import logging.config
+import logging.handlers
 import sys
 from typing import Optional, Dict, Any
 
@@ -18,8 +21,27 @@ def configure_logging(config: Dict[str, Any]) -> logging.Logger:
     Returns:
         Logger specifically for tracking results
     """
-    # Create results directory if it doesn't exist
+    # Extract log levels from config
+    console_level = config.get('logging.console_level', 'INFO')
+    file_level = config.get('logging.file_level', 'DEBUG')
+    log_file = config.get('logging.file', 'logs/recommendation_system.log')
+    log_format = config.get('logging.format', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    # Create results and logs directories if they don't exist
     os.makedirs('results', exist_ok=True)
+    os.makedirs('logs', exist_ok=True)
+
+    # Map string log levels to actual log levels
+    level_map = {
+        'DEBUG': logging.DEBUG,
+        'INFO': logging.INFO,
+        'WARNING': logging.WARNING,
+        'ERROR': logging.ERROR,
+        'CRITICAL': logging.CRITICAL
+    }
+
+    console_log_level = level_map.get(console_level.upper(), logging.INFO)
+    file_log_level = level_map.get(file_level.upper(), logging.DEBUG)
 
     # Define logging configuration
     logging_config = {
@@ -27,7 +49,7 @@ def configure_logging(config: Dict[str, Any]) -> logging.Logger:
         'disable_existing_loggers': False,
         'formatters': {
             'standard': {
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                'format': log_format
             },
             'simple': {
                 'format': '%(levelname)s - %(message)s'
@@ -36,16 +58,18 @@ def configure_logging(config: Dict[str, Any]) -> logging.Logger:
         'handlers': {
             'console': {
                 'class': 'logging.StreamHandler',
-                'level': 'INFO',
+                'level': console_log_level,
                 'formatter': 'simple',
                 'stream': 'ext://sys.stdout',
             },
             'file': {
-                'class': 'logging.FileHandler',
-                'level': 'DEBUG',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'level': file_log_level,
                 'formatter': 'standard',
-                'filename': 'logs/recommendation_system.log',
-                'mode': 'w',
+                'filename': log_file,
+                'mode': 'a',
+                'maxBytes': 10485760,  # 10MB
+                'backupCount': 5,
             },
             'results_file': {
                 'class': 'logging.FileHandler',
@@ -58,22 +82,22 @@ def configure_logging(config: Dict[str, Any]) -> logging.Logger:
         'loggers': {
             '': {  # Root logger
                 'handlers': ['console', 'file'],
-                'level': 'INFO',
+                'level': file_log_level,
                 'propagate': True
             },
             'data': {  # Data processing logs
                 'handlers': ['file'],
-                'level': 'INFO',
+                'level': file_log_level,
                 'propagate': False
             },
             'models': {  # Model training logs
                 'handlers': ['console', 'file'],
-                'level': 'INFO',
+                'level': console_log_level,
                 'propagate': False
             },
             'evaluation': {  # Evaluation logs
                 'handlers': ['console', 'file', 'results_file'],
-                'level': 'INFO',
+                'level': console_log_level,
                 'propagate': False
             },
             'results': {  # Results-only logger
@@ -83,9 +107,6 @@ def configure_logging(config: Dict[str, Any]) -> logging.Logger:
             }
         }
     }
-
-    # Ensure log directories exist
-    os.makedirs('logs', exist_ok=True)
 
     # Apply configuration
     logging.config.dictConfig(logging_config)
@@ -155,7 +176,12 @@ def setup_logger(
         # Ensure directory exists
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-        file_handler = logging.FileHandler(log_file)
+        # Use rotating file handler to avoid huge log files
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=10485760,  # 10MB
+            backupCount=5
+        )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 

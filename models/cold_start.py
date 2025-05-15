@@ -52,18 +52,34 @@ class ColdStartRecommender(BaseRecommender):
 
         logger.info(f"Initialized ColdStartRecommender with min_interactions={self.min_interactions}")
 
-    def fit(self, train_data: pd.DataFrame, item_data: pd.DataFrame, user_data: pd.DataFrame,
+    def fit(self, train_data: pd.DataFrame, item_data: Optional[pd.DataFrame] = None,
+            user_data: Optional[pd.DataFrame] = None,
             user_segments: Optional[Dict[str, List[int]]] = None) -> None:
         """
         Train the cold start recommender.
 
         Args:
             train_data: DataFrame with training data
-            item_data: DataFrame with item features
-            user_data: DataFrame with user features
-            user_segments: Dictionary mapping segment names to lists of user IDs
+            item_data: DataFrame with item features (optional)
+            user_data: DataFrame with user features (optional)
+            user_segments: Dictionary mapping segment names to lists of user IDs (optional)
         """
         logger.info("Fitting cold start recommender")
+
+        # Get item and user data if not provided directly
+        if item_data is None or user_data is None:
+            # Try to extract from dataset if available
+            from data.dataset import RetailDataset
+
+            # Check if train_data has a dataset attribute
+            dataset = getattr(train_data, 'dataset', None)
+            if isinstance(dataset, RetailDataset):
+                if item_data is None:
+                    item_data = dataset.get_item_features()
+                if user_data is None:
+                    user_data = dataset.get_user_features()
+            else:
+                raise ValueError("Cold start recommender requires item_data and user_data")
 
         # Store data
         self.user_features = user_data
@@ -112,7 +128,11 @@ class ColdStartRecommender(BaseRecommender):
         categorical_cols = demographic_features.select_dtypes(include=['object']).columns
 
         if not categorical_cols.empty:
-            one_hot = pd.get_dummies(demographic_features[categorical_cols], dummy_na=False)
+            one_hot = pd.get_dummies(
+                demographic_features[categorical_cols],
+                prefix=categorical_cols,
+                dummy_na=False
+            )
             demographic_features = demographic_features.drop(categorical_cols, axis=1)
             demographic_features = pd.concat([demographic_features, one_hot], axis=1)
 

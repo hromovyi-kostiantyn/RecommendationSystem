@@ -104,6 +104,8 @@ def setup_models(model_types: List[str], config: Dict[str, Any]) -> Dict[str, An
     return models
 
 
+# Update the train_models function in main.py
+
 def train_models(models: Dict[str, Any], dataset):
     """
     Train the specified models on the dataset.
@@ -118,6 +120,7 @@ def train_models(models: Dict[str, Any], dataset):
     train_data = dataset.get_interaction_data()
     user_features = dataset.get_user_features()
     item_features = dataset.get_item_features()
+    user_segments = dataset.get_customer_segments()
 
     # Set ID mappings for all models
     for name, model in models.items():
@@ -134,6 +137,8 @@ def train_models(models: Dict[str, Any], dataset):
         try:
             if name == 'content_based':
                 model.fit(train_data, item_features, user_features)
+            elif name == 'cold_start':
+                model.fit(train_data, item_features, user_features, user_segments)
             elif name == 'hybrid':
                 # For hybrid model, first train component models
                 component_models = {}
@@ -317,6 +322,8 @@ def generate_recommendations(models: Dict[str, Any], dataset, user_id: int, n: i
     return all_recommendations
 
 
+# Add to main.py - modify the run_experiment function
+
 def run_experiment(config: Dict[str, Any], model_types: List[str], dataset=None):
     """
     Run a full experiment with multiple models.
@@ -334,12 +341,50 @@ def run_experiment(config: Dict[str, Any], model_types: List[str], dataset=None)
     # Initialize experiment runner
     runner = ExperimentRunner(config)
 
-    # Run experiment
+    # Load dataset if not provided
+    if dataset is None:
+        logger.info("Loading dataset...")
+        dataset = load_retail_dataset(config)
+
+        # Analyze and report matrix sparsity
+        from utils.helpers import analyze_data_sparsity, print_sparsity_report
+
+        # Get interaction data
+        interaction_data = dataset.get_interaction_data()
+
+        # Analyze sparsity
+        sparsity_info = analyze_data_sparsity(interaction_data)
+
+        # Log sparsity information
+        logger.info(f"Matrix sparsity: {sparsity_info['sparsity_pct']:.2f}%")
+        logger.info(f"Users with < 5 interactions: {sparsity_info['cold_start_users_pct']:.2f}%")
+        logger.info(f"Items with < 5 interactions: {sparsity_info['cold_start_items_pct']:.2f}%")
+
+        # Print detailed report
+        if config.get('experiment.verbose', True):
+            print_sparsity_report(sparsity_info)
+
+        # Adjust models based on sparsity if enabled
+        if config.get('experiment.auto_adjust', False) and sparsity_info['sparsity'] > 0.98:
+            logger.info("Data is highly sparse. Adjusting model configurations...")
+
+            # Increase regularization for matrix factorization
+            if 'models.collaborative.matrix_fact.reg_all' in config:
+                orig_reg = config.get('models.collaborative.matrix_fact.reg_all')
+                new_reg = max(orig_reg, 0.1)  # Increase regularization for sparse data
+                config['models.collaborative.matrix_fact.reg_all'] = new_reg
+                logger.info(f"Adjusted matrix factorization regularization: {orig_reg} -> {new_reg}")
+
+            # Ensure hybrid model includes cold-start handling
+            if 'hybrid' in model_types and 'cold_start' not in model_types:
+                model_types.append('cold_start')
+                logger.info("Added cold-start model to complement hybrid model")
+
+    # Run experiment with potentially adjusted configuration
     results = runner.run_experiment(model_types, dataset)
 
     logger.info(f"Experiment complete. Results saved to {runner.experiment_dir}")
     return results
-
 
 def analyze_experiment(experiment_id: str, output_dir: str = None):
     """
