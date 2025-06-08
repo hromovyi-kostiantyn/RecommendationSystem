@@ -132,6 +132,7 @@ def train_models(models: Dict[str, Any], dataset):
     # Train each model
     for name, model in models.items():
         logger.info(f"Training {name} model")
+        # TODO  add this to the json or evaluation or metrics
         start_time = time.time()
 
         try:
