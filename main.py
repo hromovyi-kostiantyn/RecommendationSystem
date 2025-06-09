@@ -1,8 +1,9 @@
-#!/usr/bin/env python
 import os
 import sys
 import argparse
 import time
+import psutil
+import gc
 from typing import List, Dict, Any
 
 from config import load_config
@@ -28,6 +29,9 @@ from utils.visualization import create_results_visualizations
 from models.cold_start import ColdStartRecommender
 
 logger = get_logger(__name__)
+
+# Global variable to store training metrics
+global_training_metrics = {}
 
 
 def parse_arguments():
@@ -61,6 +65,30 @@ def parse_arguments():
                         help='Number of recommendations to generate')
 
     return parser.parse_args()
+
+
+def get_memory_usage():
+    """Get current memory usage in MB."""
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    return {
+        'rss_mb': memory_info.rss / 1024 / 1024,
+        'vms_mb': memory_info.vms / 1024 / 1024,
+        'percent': process.memory_percent()
+    }
+
+
+def get_model_size(model):
+    """Estimate model size by measuring object size."""
+    try:
+        import pickle
+        import tempfile
+        with tempfile.NamedTemporaryFile() as tmp_file:
+            pickle.dump(model, tmp_file)
+            size_bytes = tmp_file.tell()
+        return size_bytes / 1024 / 1024  # Convert to MB
+    except:
+        return 0.0
 
 
 def setup_models(model_types: List[str], config: Dict[str, Any]) -> Dict[str, Any]:
@@ -104,17 +132,15 @@ def setup_models(model_types: List[str], config: Dict[str, Any]) -> Dict[str, An
     return models
 
 
-# Update the train_models function in main.py
-
 def train_models(models: Dict[str, Any], dataset):
     """
-    Train the specified models on the dataset.
+    Train the specified models on the dataset with resource monitoring.
 
     Args:
         models: Dictionary mapping model names to model instances
         dataset: Dataset to train on
     """
-    logger.info("Training models")
+    logger.info("Training models with resource monitoring")
 
     # Get data for training
     train_data = dataset.get_interaction_data()
@@ -129,10 +155,17 @@ def train_models(models: Dict[str, Any], dataset):
             dataset.get_item_id_mapping()
         )
 
+    # Store training metrics for each model
+    training_metrics = {}
+
     # Train each model
     for name, model in models.items():
         logger.info(f"Training {name} model")
-        # TODO  add this to the json or evaluation or metrics
+
+        # Get initial memory state
+        initial_memory = get_memory_usage()
+        gc.collect()  # Clean up before training
+
         start_time = time.time()
 
         try:
@@ -177,25 +210,56 @@ def train_models(models: Dict[str, Any], dataset):
             else:
                 model.fit(train_data)
 
-            training_time = time.time() - start_time
+            end_time = time.time()
+            training_time = end_time - start_time
+
+            # Get final memory state
+            final_memory = get_memory_usage()
+            memory_delta = final_memory['rss_mb'] - initial_memory['rss_mb']
+
+            # Get model size
+            model_size = get_model_size(model)
+
+            # Store metrics
+            training_metrics[name] = {
+                'training_time_seconds': training_time,
+                'peak_memory_mb': final_memory['rss_mb'],
+                'memory_delta_mb': memory_delta,
+                'model_size_mb': model_size,
+                'training_data_size': len(train_data),
+                'num_users': len(dataset.get_user_id_mapping()),
+                'num_items': len(dataset.get_item_id_mapping())
+            }
+
             logger.info(f"Trained {name} model in {training_time:.2f} seconds")
+            logger.info(f"Memory usage: {final_memory['rss_mb']:.2f} MB (delta: {memory_delta:+.2f} MB)")
+            logger.info(f"Model size: {model_size:.2f} MB")
 
         except Exception as e:
             logger.error(f"Error training {name} model: {str(e)}", exc_info=True)
+            training_metrics[name] = {
+                'training_time_seconds': 0,
+                'error': str(e)
+            }
+
+    # Store training metrics globally for use in evaluation
+    global global_training_metrics
+    global_training_metrics = training_metrics
 
     logger.info("Model training complete")
+    return training_metrics
 
 
 def evaluate_models(models: Dict[str, Any], dataset):
     """
-    Evaluate the specified models on the dataset.
+    Evaluate the specified models on the dataset with resource metrics.
 
     Args:
         models: Dictionary mapping model names to model instances
         dataset: Dataset to evaluate on
 
     Returns:
-        Dictionary with evaluation results
+        Dictionary with evaluation results including training metrics
     """
     logger.info("Evaluating models")
 
@@ -228,6 +292,9 @@ def evaluate_models(models: Dict[str, Any], dataset):
         logger.info(f"Evaluating {name} model")
 
         try:
+            # Time the evaluation
+            eval_start_time = time.time()
+
             model_results = evaluator.evaluate(
                 model,
                 test_data,
@@ -236,12 +303,61 @@ def evaluate_models(models: Dict[str, Any], dataset):
                 user_segments
             )
 
+            eval_end_time = time.time()
+            evaluation_time = eval_end_time - eval_start_time
+
+            # Add evaluation timing
+            model_results['evaluation_time_seconds'] = evaluation_time
+
+            # Test prediction speed
+            sample_users = list(dataset.get_user_id_mapping().keys())[:5]
+            sample_items = list(dataset.get_item_id_mapping().keys())[:5]
+
+            if sample_users and sample_items:
+                # Test individual predictions
+                prediction_times = []
+                successful_predictions = 0
+
+                for _ in range(20):  # Test 20 predictions
+                    try:
+                        pred_start = time.time()
+                        model.predict(sample_users[0], sample_items[0])
+                        pred_end = time.time()
+                        prediction_times.append((pred_end - pred_start) * 1000)  # Convert to ms
+                        successful_predictions += 1
+                    except:
+                        pass
+
+                if prediction_times:
+                    model_results['avg_prediction_time_ms'] = sum(prediction_times) / len(prediction_times)
+                    model_results['predictions_per_second'] = 1000 / model_results['avg_prediction_time_ms']
+
+                # Test recommendation generation speed
+                try:
+                    rec_start = time.time()
+                    model.recommend(sample_users[0], n=10)
+                    rec_end = time.time()
+                    model_results['recommendation_time_ms'] = (rec_end - rec_start) * 1000
+                except:
+                    model_results['recommendation_time_ms'] = 0
+
+            # Add training metrics if available
+            global global_training_metrics
+            if 'global_training_metrics' in globals() and name in global_training_metrics:
+                training_data = global_training_metrics[name]
+                model_results.update(training_data)
+
             results[name] = model_results
 
             # Log key metrics
             logger.info(f"Results for {name} model:")
+            logger.info(f"  Evaluation time: {evaluation_time:.2f}s")
+            if 'training_time_seconds' in model_results:
+                logger.info(f"  Training time: {model_results['training_time_seconds']:.2f}s")
+            if 'avg_prediction_time_ms' in model_results:
+                logger.info(f"  Avg prediction time: {model_results['avg_prediction_time_ms']:.2f}ms")
             for metric, value in model_results.items():
-                if isinstance(value, (int, float)) and not metric.startswith('segment'):
+                if isinstance(value, (int, float)) and not metric.startswith('segment') and metric.endswith('@10'):
                     logger.info(f"  {metric}: {value:.4f}")
 
         except Exception as e:
@@ -323,8 +439,6 @@ def generate_recommendations(models: Dict[str, Any], dataset, user_id: int, n: i
     return all_recommendations
 
 
-# Add to main.py - modify the run_experiment function
-
 def run_experiment(config: Dict[str, Any], model_types: List[str], dataset=None):
     """
     Run a full experiment with multiple models.
@@ -386,6 +500,7 @@ def run_experiment(config: Dict[str, Any], model_types: List[str], dataset=None)
 
     logger.info(f"Experiment complete. Results saved to {runner.experiment_dir}")
     return results
+
 
 def analyze_experiment(experiment_id: str, output_dir: str = None):
     """

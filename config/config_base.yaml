@@ -76,7 +76,7 @@ models:
 # Evaluation settings
 evaluation:
   metrics: ["precision", "recall", "ndcg", "hit_rate", "map", "mrr", "diversity", "novelty"]
-  k_values: [1, 5, 10, 20]
+  k_values: [5, 10, 20]
   cv_folds: 5  # Number of cross-validation folds
   relevance_threshold: 3.5  # Rating threshold for relevance
 

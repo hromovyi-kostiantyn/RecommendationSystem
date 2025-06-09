@@ -79,6 +79,7 @@ def save_results_to_csv(results: Dict[str, Dict[str, Any]], experiment_dir: str)
     # Define file paths
     metrics_path = os.path.join(experiment_dir, 'evaluation_results.csv')
     segments_path = os.path.join(experiment_dir, 'segment_results.csv')
+    resource_path = os.path.join(experiment_dir, 'resource_metrics.csv')
 
     # Prepare metrics data
     metrics_data = []
@@ -97,6 +98,26 @@ def save_results_to_csv(results: Dict[str, Dict[str, Any]], experiment_dir: str)
 
     logger.info(f"Saved evaluation metrics to {metrics_path}")
 
+    # Prepare resource metrics data
+    resource_data = []
+    resource_headers = ["model", "training_time_seconds", "peak_memory_mb", "model_size_mb",
+                        "avg_prediction_time_ms", "predictions_per_second", "evaluation_time_seconds",
+                        "ndcg@10", "hit_rate@10", "precision@10", "recall@10"]
+
+    for model, model_results in results.items():
+        row = [model]
+        for header in resource_headers[1:]:  # Skip 'model' column
+            row.append(model_results.get(header, "N/A"))
+        resource_data.append(row)
+
+    # Write resource data to CSV
+    with open(resource_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(resource_headers)
+        writer.writerows(resource_data)
+
+    logger.info(f"Saved resource metrics to {resource_path}")
+
     # Check if segment data exists
     has_segments = False
     for model_results in results.values():
@@ -105,6 +126,8 @@ def save_results_to_csv(results: Dict[str, Dict[str, Any]], experiment_dir: str)
             break
 
     # Save segment data if it exists
+    saved_files = {"metrics": metrics_path, "resources": resource_path}
+
     if has_segments:
         segment_data = []
         segment_headers = ["model", "segment", "metric", "value"]
@@ -121,9 +144,9 @@ def save_results_to_csv(results: Dict[str, Dict[str, Any]], experiment_dir: str)
             writer.writerows(segment_data)
 
         logger.info(f"Saved segment results to {segments_path}")
-        return {"metrics": metrics_path, "segments": segments_path}
+        saved_files["segments"] = segments_path
 
-    return {"metrics": metrics_path}
+    return saved_files
 
 
 def save_results_to_json(results: Dict[str, Dict[str, Any]], experiment_dir: str) -> str:
@@ -188,7 +211,9 @@ def generate_report(results: Dict[str, Dict[str, Any]], experiment_dir: str) -> 
     ndcg_metrics = sorted([m for m in metrics if m.startswith('ndcg')])
     hit_rate_metrics = sorted([m for m in metrics if m.startswith('hit_rate')])
     other_metrics = sorted([m for m in metrics if m not in precision_metrics +
-                            recall_metrics + ndcg_metrics + hit_rate_metrics])
+                            recall_metrics + ndcg_metrics + hit_rate_metrics and
+                            not m.endswith('_seconds') and not m.endswith('_mb') and
+                            not m.endswith('_ms') and m != 'predictions_per_second'])
 
     # Add model comparison
     report.append("## Model Comparison\n")
@@ -227,17 +252,27 @@ def generate_report(results: Dict[str, Dict[str, Any]], experiment_dir: str) -> 
 
         report.append("")
 
-    # Add training time comparison
+    # Add resource usage section
     report.append("### Training Time\n")
-    report.append("| Model | Training Time (seconds) |")
-    report.append("|-------|--------------------------|")
+    report.append("| Model | Training Time (seconds) | Peak Memory (MB) | Model Size (MB) | Prediction Time (ms) |")
+    report.append("|-------|--------------------------|------------------|-----------------|---------------------|")
 
     for model in models:
-        training_time = results[model].get('training_time', "N/A")
+        training_time = results[model].get('training_time_seconds', "N/A")
+        peak_memory = results[model].get('peak_memory_mb', "N/A")
+        model_size = results[model].get('model_size_mb', "N/A")
+        pred_time = results[model].get('avg_prediction_time_ms', "N/A")
+
         if isinstance(training_time, (int, float)):
-            report.append(f"| {model} | {training_time:.2f} |")
-        else:
-            report.append(f"| {model} | {training_time} |")
+            training_time = f"{training_time:.2f}"
+        if isinstance(peak_memory, (int, float)):
+            peak_memory = f"{peak_memory:.2f}"
+        if isinstance(model_size, (int, float)):
+            model_size = f"{model_size:.2f}"
+        if isinstance(pred_time, (int, float)):
+            pred_time = f"{pred_time:.2f}"
+
+        report.append(f"| {model} | {training_time} | {peak_memory} | {model_size} | {pred_time} |")
 
     report.append("")
 
@@ -323,6 +358,33 @@ def generate_report(results: Dict[str, Dict[str, Any]], experiment_dir: str) -> 
         for metric, (model, value) in best_models.items():
             report.append(f"- **{metric}**: {model} ({value:.4f})")
         report.append("")
+
+    # Resource efficiency insights
+    report.append("### Resource Efficiency\n")
+
+    # Find most efficient models
+    fastest_training = min(models, key=lambda m: results[m].get('training_time_seconds', float('inf')))
+    lowest_memory = min(models, key=lambda m: results[m].get('peak_memory_mb', float('inf')))
+    smallest_model = min(models, key=lambda m: results[m].get('model_size_mb', float('inf')))
+    fastest_prediction = min(models, key=lambda m: results[m].get('avg_prediction_time_ms', float('inf')))
+
+    if results[fastest_training].get('training_time_seconds', 0) > 0:
+        training_time = results[fastest_training]['training_time_seconds']
+        report.append(f"- **Fastest Training**: {fastest_training} ({training_time:.2f}s)")
+
+    if results[lowest_memory].get('peak_memory_mb', 0) > 0:
+        memory_usage = results[lowest_memory]['peak_memory_mb']
+        report.append(f"- **Lowest Memory Usage**: {lowest_memory} ({memory_usage:.2f} MB)")
+
+    if results[smallest_model].get('model_size_mb', 0) > 0:
+        model_size = results[smallest_model]['model_size_mb']
+        report.append(f"- **Smallest Model**: {smallest_model} ({model_size:.2f} MB)")
+
+    if results[fastest_prediction].get('avg_prediction_time_ms', 0) > 0:
+        pred_time = results[fastest_prediction]['avg_prediction_time_ms']
+        report.append(f"- **Fastest Prediction**: {fastest_prediction} ({pred_time:.2f} ms)")
+
+    report.append("")
 
     # Segment differences
     report.append("### Segment Performance\n")

@@ -3,6 +3,8 @@ import json
 import time
 import pandas as pd
 import numpy as np
+import psutil
+import gc
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -29,7 +31,7 @@ class ExperimentRunner:
     Runner for recommendation system experiments.
 
     This class handles the execution of recommendation system experiments,
-    including model training, evaluation, and results storage.
+    including model training, evaluation, and results storage with resource monitoring.
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -49,7 +51,31 @@ class ExperimentRunner:
         self.experiment_dir = os.path.join(self.output_dir, self.experiment_id)
         ensure_directory(self.experiment_dir)
 
+        # Initialize process for resource monitoring
+        self.process = psutil.Process(os.getpid())
+
         logger.info(f"Initialized ExperimentRunner with ID: {self.experiment_id}")
+
+    def get_memory_usage(self):
+        """Get current memory usage in MB."""
+        memory_info = self.process.memory_info()
+        return {
+            'rss_mb': memory_info.rss / 1024 / 1024,
+            'vms_mb': memory_info.vms / 1024 / 1024,
+            'percent': self.process.memory_percent()
+        }
+
+    def get_model_size(self, model):
+        """Estimate model size by measuring object size."""
+        try:
+            import pickle
+            import tempfile
+            with tempfile.NamedTemporaryFile() as tmp_file:
+                pickle.dump(model, tmp_file)
+                size_bytes = tmp_file.tell()
+            return size_bytes / 1024 / 1024  # Convert to MB
+        except:
+            return 0.0
 
     def create_model(self, model_type: str) -> BaseRecommender:
         """
@@ -81,14 +107,14 @@ class ExperimentRunner:
     @timer
     def run_experiment(self, model_types: List[str], dataset=None) -> Dict[str, Any]:
         """
-        Run an experiment with multiple recommendation models.
+        Run an experiment with multiple recommendation models including resource monitoring.
 
         Args:
             model_types: List of model types to evaluate.
             dataset: Optional preloaded dataset (will load if not provided).
 
         Returns:
-            Dictionary with experiment results.
+            Dictionary with experiment results including resource metrics.
         """
         # Load dataset if not provided
         if dataset is None:
@@ -133,8 +159,13 @@ class ExperimentRunner:
                 dataset.get_item_id_mapping()
             )
 
-            # Train model
+            # Train model with resource monitoring
             logger.info(f"Training {model_type} model...")
+
+            # Get initial memory state
+            initial_memory = self.get_memory_usage()
+            gc.collect()
+
             start_time = time.time()
 
             if model_type == 'content_based':
@@ -172,19 +203,74 @@ class ExperimentRunner:
             else:
                 model.fit(train_data)
 
-            training_time = time.time() - start_time
+            end_time = time.time()
+            training_time = end_time - start_time
 
-            # Evaluate model
+            # Get final memory state
+            final_memory = self.get_memory_usage()
+            memory_delta = final_memory['rss_mb'] - initial_memory['rss_mb']
+
+            # Get model size
+            model_size = self.get_model_size(model)
+
+            # Evaluate model with timing
             logger.info(f"Evaluating {model_type} model...")
+            eval_start_time = time.time()
+
             results = evaluator.evaluate(model, test_data, item_features, user_features, user_segments)
 
-            # Add model type and training time to results
-            results['model_type'] = model_type
-            results['training_time'] = training_time
+            eval_end_time = time.time()
+            evaluation_time = eval_end_time - eval_start_time
+
+            # Test prediction speed
+            sample_users = list(dataset.get_user_id_mapping().keys())[:5]
+            sample_items = list(dataset.get_item_id_mapping().keys())[:5]
+
+            prediction_time = 0
+            predictions_per_second = 0
+
+            if sample_users and sample_items:
+                prediction_times = []
+                for _ in range(10):  # Test 10 predictions
+                    try:
+                        pred_start = time.time()
+                        model.predict(sample_users[0], sample_items[0])
+                        pred_end = time.time()
+                        prediction_times.append((pred_end - pred_start) * 1000)  # Convert to ms
+                    except:
+                        pass
+
+                if prediction_times:
+                    prediction_time = sum(prediction_times) / len(prediction_times)
+                    predictions_per_second = 1000 / prediction_time if prediction_time > 0 else 0
+
+            # Add resource metrics to results
+            results.update({
+                'model_type': model_type,
+                'training_time_seconds': training_time,
+                'evaluation_time_seconds': evaluation_time,
+                'peak_memory_mb': final_memory['rss_mb'],
+                'memory_delta_mb': memory_delta,
+                'model_size_mb': model_size,
+                'avg_prediction_time_ms': prediction_time,
+                'predictions_per_second': predictions_per_second,
+                'training_data_size': len(train_data),
+                'test_data_size': len(test_data),
+                'num_users': len(dataset.get_user_id_mapping()),
+                'num_items': len(dataset.get_item_id_mapping())
+            })
 
             # Save results
             all_results[model_type] = results
             trained_models[model_type] = model
+
+            # Log resource metrics
+            logger.info(f"Training completed in {training_time:.2f} seconds")
+            logger.info(f"Evaluation completed in {evaluation_time:.2f} seconds")
+            logger.info(f"Peak memory usage: {final_memory['rss_mb']:.2f} MB")
+            logger.info(f"Model size: {model_size:.2f} MB")
+            if prediction_time > 0:
+                logger.info(f"Average prediction time: {prediction_time:.2f} ms")
 
             # Save model if requested
             if self.save_models:
@@ -199,14 +285,14 @@ class ExperimentRunner:
 
         logger.info(f"Saved experiment results to {results_path}")
 
-        # Create summary plots
+        # Create summary plots including resource metrics
         self._create_results_plots(all_results)
 
         return all_results
 
     def _create_results_plots(self, results: Dict[str, Any]) -> None:
         """
-        Create summary plots of experiment results.
+        Create summary plots of experiment results including resource metrics.
 
         Args:
             results: Dictionary with experiment results.
@@ -256,29 +342,78 @@ class ExperimentRunner:
             plt.savefig(plot_path)
             plt.close()
 
-        # Create training time comparison
-        training_times = [(model, results[model].get('training_time', 0)) for model in models]
-        training_times.sort(key=lambda x: x[1])
+        # Create resource usage plots
 
-        plt.figure(figsize=(10, 6))
-        model_names = [t[0] for t in training_times]
-        times = [t[1] for t in training_times]
+        # Training time comparison
+        training_times = [(model, results[model].get('training_time_seconds', 0)) for model in models]
+        training_times = [(model, time) for model, time in training_times if time > 0]
 
-        ax = sns.barplot(x=model_names, y=times)
+        if training_times:
+            plt.figure(figsize=(10, 6))
+            training_times.sort(key=lambda x: x[1])
 
-        # Add labels
-        for i, v in enumerate(times):
-            ax.text(i, v + 0.1, f"{v:.2f}s", ha='center')
+            model_names = [t[0] for t in training_times]
+            times = [t[1] for t in training_times]
 
-        # Set title and labels
-        plt.title("Model Training Time Comparison")
-        plt.ylabel("Training Time (seconds)")
-        plt.xlabel("Model")
-        plt.xticks(rotation=45)
+            ax = sns.barplot(x=model_names, y=times)
+
+            # Add labels
+            for i, v in enumerate(times):
+                ax.text(i, v + 0.1, f"{v:.2f}s", ha='center')
+
+            plt.title("Model Training Time Comparison")
+            plt.ylabel("Training Time (seconds)")
+            plt.xlabel("Model")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+
+            plot_path = os.path.join(plots_dir, "training_time_comparison.png")
+            plt.savefig(plot_path)
+            plt.close()
+
+        # Memory usage comparison
+        plt.figure(figsize=(12, 6))
+
+        peak_memory = [results[model].get('peak_memory_mb', 0) for model in models]
+        model_sizes = [results[model].get('model_size_mb', 0) for model in models]
+
+        x = np.arange(len(models))
+        width = 0.35
+
+        plt.bar(x - width / 2, peak_memory, width, label='Peak Memory (MB)', alpha=0.8)
+        plt.bar(x + width / 2, model_sizes, width, label='Model Size (MB)', alpha=0.8)
+
+        plt.xlabel('Models')
+        plt.ylabel('Memory (MB)')
+        plt.title('Memory Usage Comparison')
+        plt.xticks(x, models, rotation=45)
+        plt.legend()
         plt.tight_layout()
 
-        # Save plot
-        plot_path = os.path.join(plots_dir, "training_time_comparison.png")
+        plot_path = os.path.join(plots_dir, "memory_usage_comparison.png")
+        plt.savefig(plot_path)
+        plt.close()
+
+        # Performance vs Resource efficiency plot
+        plt.figure(figsize=(12, 8))
+
+        for model in models:
+            ndcg = results[model].get('ndcg@10', 0)
+            training_time = results[model].get('training_time_seconds', 0)
+            memory = results[model].get('peak_memory_mb', 0)
+
+            if ndcg > 0 and training_time > 0:
+                plt.scatter(training_time, ndcg, s=memory / 2, alpha=0.6, label=model)
+                plt.annotate(model, (training_time, ndcg), xytext=(5, 5),
+                             textcoords='offset points')
+
+        plt.xlabel('Training Time (seconds)')
+        plt.ylabel('NDCG@10')
+        plt.title('Model Efficiency: Performance vs Training Time\n(Bubble size = Memory Usage)')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        plot_path = os.path.join(plots_dir, "efficiency_analysis.png")
         plt.savefig(plot_path)
         plt.close()
 
@@ -330,7 +465,7 @@ class ExperimentRunner:
                     plt.savefig(plot_path)
                     plt.close()
 
-        logger.info(f"Saved {len(metric_values)} comparison plots to {plots_dir}")
+        logger.info(f"Saved comparison plots to {plots_dir}")
 
 
 class ExperimentAnalyzer:
@@ -412,7 +547,8 @@ class ExperimentAnalyzer:
                     comparison.loc[model, metric] = self.results[model][metric]
 
         # Add training time
-        comparison['training_time'] = [self.results[model].get('training_time', None) for model in models]
+        comparison['training_time_seconds'] = [self.results[model].get('training_time_seconds', None) for model in
+                                               models]
 
         logger.info(f"Created model comparison with {len(models)} models and {len(metrics)} metrics")
         return comparison

@@ -16,3 +16,5 @@ tqdm>=4.60.0
 # Optional: For data visualization
 matplotlib>=3.4.0
 seaborn>=0.11.0
+
+psutil>=5.8.0
