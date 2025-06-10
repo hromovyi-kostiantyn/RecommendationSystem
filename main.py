@@ -49,7 +49,7 @@ def parse_arguments():
     # Models to include
     parser.add_argument('--models', type=str, nargs='+',
                         choices=['random', 'popularity', 'neighborhood', 'matrix_fact',
-                                 'content_based', 'hybrid', 'all', 'cold_start'],
+                                 'content_based', 'hybrid', 'all'],
                         default=['all'], help='Models to include')
 
     # Dataset options
@@ -107,7 +107,7 @@ def setup_models(model_types: List[str], config: Dict[str, Any]) -> Dict[str, An
     # Expand 'all' to include all model types
     if 'all' in model_types:
         model_types = ['random', 'popularity', 'neighborhood', 'matrix_fact',
-                       'content_based', 'hybrid', 'cold_start']
+                       'content_based', 'hybrid']
 
     models = {}
 
@@ -126,8 +126,6 @@ def setup_models(model_types: List[str], config: Dict[str, Any]) -> Dict[str, An
             models[model_type] = ContentBasedRecommender(config)
         elif model_type == 'hybrid':
             models[model_type] = HybridRecommender(config)
-        elif model_type == 'cold_start':
-            models[model_type] = ColdStartRecommender(config)
 
     return models
 
@@ -171,8 +169,6 @@ def train_models(models: Dict[str, Any], dataset):
         try:
             if name == 'content_based':
                 model.fit(train_data, item_features, user_features)
-            elif name == 'cold_start':
-                model.fit(train_data, item_features, user_features, user_segments)
             elif name == 'hybrid':
                 # For hybrid model, first train component models
                 component_models = {}
