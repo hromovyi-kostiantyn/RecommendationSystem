@@ -1,5 +1,3 @@
-# Updated logging configuration in utils/logger.py
-
 import os
 import logging
 import logging.config
